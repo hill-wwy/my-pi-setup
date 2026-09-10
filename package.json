@@ -1,0 +1,23 @@
+{
+  "name": "my-pi-setup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Pi coding agent extensions and setup guide",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hill-wwy/my-pi-setup.git"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi-notify/index.ts",
+      "./extensions/pi-check-agent-quota/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

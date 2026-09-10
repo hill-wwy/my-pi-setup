@@ -1,0 +1,26 @@
+# Package-manager output
+node_modules/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+*.local.json
+*.log
+.DS_Store
+
+# Pi credentials and private runtime data: never commit these
+**/auth.json
+**/sessions/
+**/missions/
+**/run-history.jsonl
+**/pi-notify-topic
+
+# Pi-generated catalogs, caches and installed package copies
+**/models-store.json
+**/state/
+**/web-search-cache/
+**/npm/
+**/git/
+**/bin/
+**/*-cache.json
