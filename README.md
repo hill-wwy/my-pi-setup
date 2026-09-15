@@ -1,22 +1,27 @@
 # my-pi-setup
 
-我的最小 Pi 环境恢复仓库。
+我的 Pi 环境恢复仓库。**以当前 Windows 机器为唯一事实来源**，仓库文件
+镜像 `~/.pi/agent/` 的真实布局，新机器上按位置复制回去即可。
 
-当前第一版只做两件事：
+本仓库**不再是一个 Pi Package**（当前机器已经不用 `pi install <本仓库>`
+的方式加载扩展），而是一个纯粹的"定制文件 + 恢复清单"仓库。
 
-- 通过一个 Pi Package 安装本机定制的 `pi-notify` 和
-  `pi-check-agent-quota` 扩展。
-- 记录其他第三方 packages、外部 skills 和基础偏好的手动恢复步骤。
+不会同步登录凭据、聊天会话、缓存或完整 `settings.json`。
 
-本仓库不会同步登录凭据、聊天会话、缓存或完整 `settings.json`。
+## 仓库内容 → 安装位置
 
-## 新环境安装
+| 仓库路径 | 恢复到 | 说明 |
+| --- | --- | --- |
+| `extensions/pi-notify/` | `~/.pi/agent/extensions/pi-notify/` | 桌面/终端通知，长任务可发 ntfy 手机通知 |
+| `extensions/tokenhub-gateway/` | `~/.pi/agent/extensions/tokenhub-gateway/` | 腾讯 TokenHub 聚合网关（`gateway.mjs` + `config.json`；`index.ts.disabled` 是可选的 pi 自启动扩展，当前**已禁用**） |
+| `local-packages/pi-check-agent-quota/` | `~/.pi/agent/local-packages/` | 本机定制额度显示 local package（zai-coding 国内外通用、reset 倒计时等） |
+| `models.json` | `~/.pi/agent/models.json` | 自定义 provider `tencent-tokenhub`（指向本机网关 `127.0.0.1:8790/v1`，含 `auto` 故障转移链） |
+| `AGENTS.md` | `~/.pi/agent/AGENTS.md` | 全局 agent 环境规则（WSL2 路径约定、共用浏览器守护 8787） |
+| `skills/herdr-subagent/` | `~/.pi/agent/skills/herdr-subagent/` | 自制中文版 Herdr 子代理 SOP（与 @sfroment/pi-herdr 自带 skill 不同） |
 
-以下步骤适用于 Windows、Linux 和 macOS。系统需要先安装：
+## 新环境恢复步骤
 
-- [Git](https://git-scm.com/)
-- Node.js `>=22.19.0`
-- npm
+系统需要：[Git](https://git-scm.com/)、Node.js `>=22.19.0`、npm。
 
 ### 1. 安装 Pi
 
@@ -25,21 +30,37 @@ npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 pi --version
 ```
 
-### 2. 安装本仓库 Pi Package
+### 2. 复制定制文件
+
+bash（Git Bash / WSL 均可，`$HOME` 换成对应用户目录）：
 
 ```bash
-pi install https://github.com/hill-wwy/my-pi-setup
+PI="$HOME/.pi/agent"
+mkdir -p "$PI/extensions" "$PI/local-packages" "$PI/skills"
+
+cp -r extensions/pi-notify               "$PI/extensions/"
+cp -r extensions/tokenhub-gateway        "$PI/extensions/"
+cp -r local-packages/pi-check-agent-quota "$PI/local-packages/"
+cp models.json                           "$PI/models.json"
+cp AGENTS.md                             "$PI/AGENTS.md"
+cp -r skills/herdr-subagent              "$PI/skills/"
 ```
 
-这一步会加载：
+PowerShell：
 
-- `pi-notify`：任务完成时发送终端/桌面通知；长任务可以发送 ntfy 手机通知。
-- `pi-check-agent-quota`：显示 provider 额度；仓库保存的是当前本机的定制版本，
-  包含 OpenAI Codex 用量窗口和 Windows IPv4 兼容处理。
+```powershell
+$pi = "$HOME\.pi\agent"
+Copy-Item -Recurse -Force extensions\pi-notify                "$pi\extensions\"
+Copy-Item -Recurse -Force extensions\tokenhub-gateway         "$pi\extensions\"
+Copy-Item -Recurse -Force local-packages\pi-check-agent-quota "$pi\local-packages\"
+Copy-Item -Force models.json  "$pi\models.json"
+Copy-Item -Force AGENTS.md    "$pi\AGENTS.md"
+Copy-Item -Recurse -Force skills\herdr-subagent "$pi\skills\"
+```
 
-### 3. 安装当前使用的第三方 Pi Packages
+### 3. 安装第三方 Pi Packages
 
-逐条执行：
+当前机器实际安装列表：
 
 ```bash
 pi install npm:pi-web-access
@@ -48,129 +69,109 @@ pi install npm:@narumitw/pi-goal
 pi install npm:@narumitw/pi-btw
 pi install npm:pi-codex-fast-mode
 pi install git:github.com/majorgilles/pi-grill-me
+pi install npm:@sfroment/pi-herdr
+pi install npm:pi-compact-ui
 ```
 
-当前电脑还安装了 `pi-subagents`，但它的主扩展和两个 skills 都已禁用，所以
-第一版默认不安装。需要它时可以执行：
+可选（当前机器装了但资源已禁用，恢复后用 `pi config` 按需开关）：
 
 ```bash
-pi install npm:pi-subagents
-pi config
+pi install npm:pi-subagents   # 本机已禁用：主扩展 + 全部 skills + 全部 prompts
+pi install npm:pi-x-search    # 本机已禁用：extensions/x-search.ts
 ```
 
-使用 `pi config` 可以检查和启用/禁用各 package 提供的具体资源。
+当前各 package 的启用细节（对照 `pi config` 检查）：
 
-### 4. 安装两个外部 Skills
+- `@narumitw/pi-goal`：仅 `+dist/index.ts` 启用。
+- `@narumitw/pi-btw`：扩展 `-dist/index.ts` 禁用（只用它的 prompts/skills）。
+- `pi-check-agent-quota` 不走 `pi install`，是 local package（步骤 2 已复制），
+  settings.json 里表现为路径 `~/.pi/agent/local-packages/pi-check-agent-quota`。
 
-#### Windows PowerShell
+### 4. 安装外部 Skills
 
-```powershell
-$piSkillsDir = Join-Path $HOME ".pi\agent\skills"
-New-Item -ItemType Directory -Force -Path $piSkillsDir | Out-Null
-git clone https://github.com/keepongo/video-summarizer.git (Join-Path $piSkillsDir "multi-video-summarizer")
-git clone https://github.com/xingyaoww/show-me.git (Join-Path $piSkillsDir "show-me")
-```
-
-#### Linux / macOS
+**Git clone（保持可 git pull 更新）：**
 
 ```bash
-mkdir -p ~/.pi/agent/skills
-git clone https://github.com/keepongo/video-summarizer.git ~/.pi/agent/skills/multi-video-summarizer
-git clone https://github.com/xingyaoww/show-me.git ~/.pi/agent/skills/show-me
+PI="$HOME/.pi/agent/skills"; mkdir -p "$PI"
+git clone https://github.com/keepongo/video-summarizer.git "$PI/multi-video-summarizer"
+git clone https://github.com/xingyaoww/show-me.git          "$PI/show-me"
+git clone https://github.com/badlogic/pi-skills.git         "$PI/pi-skills"   # 用其中的 browser-tools
 ```
 
-`multi-video-summarizer` 还可能需要 Python 依赖；第一次使用前按它自己的
-README 安装即可。
-
-### 5. 登录并恢复基础偏好
-
-启动 Pi：
+**从 mattpocock/skills 复制（纯拷贝，更新时重新复制即可）：**
 
 ```bash
-pi
+git clone --depth 1 https://github.com/mattpocock/skills.git /tmp/mp-skills
+PI="$HOME/.pi/agent/skills"
+cp -r /tmp/mp-skills/skills/productivity/grill-me  /tmp/mp-skills/skills/productivity/grilling \
+      /tmp/mp-skills/skills/productivity/handoff   /tmp/mp-skills/skills/productivity/teach \
+      "$PI/"
+cp -r /tmp/mp-skills/skills/engineering/implement /tmp/mp-skills/skills/engineering/prototype \
+      /tmp/mp-skills/skills/engineering/research  /tmp/mp-skills/skills/engineering/tdd \
+      /tmp/mp-skills/skills/engineering/to-spec   /tmp/mp-skills/skills/engineering/to-tickets \
+      /tmp/mp-skills/skills/engineering/wayfinder "$PI/"
 ```
 
-在 Pi 中执行：
+自制 skill（`herdr-subagent`）已在本仓库 `skills/` 里，步骤 2 复制。
 
-```text
-/login
-/settings
-/model
-```
+### 5. 登录
 
-当前常用偏好：
+在 Pi 中逐个执行 `/login`：
+
+- `zai-coding-cn`（GLM Coding Plan，默认 provider）
+- `openai-codex`（ChatGPT 登录，可选 `/fast on` 开 Fast mode）
+- `deepseek`
+- `tencent-tokenhub`：粘贴 TokenHub API key。key 保存在 `auth.json`，
+  TokenHub 网关运行时会读它（也可用环境变量 `TENCENT_TOKENHUB_API_KEY` 代替）。
+
+### 6. 基础偏好
 
 | 项目 | 当前值 |
 | --- | --- |
 | Theme | `dark` |
-| 默认 provider | `kimi-coding` |
-| 默认 model | `k3-256k` |
+| 默认 provider | `zai-coding-cn` |
+| 默认 model | `glm-5.3-flash` |
+| enabledModels | `openai-codex/gpt-5.6-terra`、`openai-codex/gpt-5.6-sol`、`deepseek/deepseek-flash`、`zai-coding-cn/glm-5.3-flash`、`zai-coding-cn/glm-5.3`、`zai-coding-cn/glm-4.6v`（在 `/model` 里勾选） |
+| `web-search.json` | `{"workflow": "auto-summary"}` |
+| `config/thinking-box.json` | `{"showHeader": false}` |
 
-如果使用 ChatGPT/Codex 登录，并希望启用 Fast mode：
+### 7. TokenHub 聚合网关
 
-```text
-/fast on
-/fast status
-```
+`extensions/tokenhub-gateway/gateway.mjs`（零依赖，纯 node 内置模块）把腾讯
+TokenHub 上的 17 个模型合成一个虚拟模型 `auto`：按 `config.json` 的 chain
+顺序依次尝试，额度用尽/限流自动切换下一个，用尽的写进 `state.json` 冷却。
+pi 通过 `models.json` 里的 `tencent-tokenhub` provider 走 `http://127.0.0.1:8790/v1`。
 
-### 6. Windows 可选环境说明
-
-当前 Windows 环境使用原生 Git Bash，不是 WSL。需要时可创建
-`~/.pi/agent/AGENTS.md`：
-
-```markdown
-# 环境（Windows）
-
-bash 工具是 Git Bash（Windows 原生，非 WSL）。需要 Linux 环境时：
-`wsl -d Ubuntu`。
-```
-
-Linux 和 macOS 不要复制这段 Windows 指令。
-
-## 简单检查
-
-查看已经安装的 packages：
+启动（后台常驻，pi 退出不杀）：
 
 ```bash
-pi list
+node ~/.pi/agent/extensions/tokenhub-gateway/gateway.mjs &
 ```
 
-进入 Pi 后可以检查定制扩展：
+Windows 常驻可在 PowerShell 里 `Start-Process node -ArgumentList "...gateway.mjs" -WindowStyle Hidden`。
+端口 8790 已被占用时新实例会自动退出（说明已在运行）。
 
-```text
-/notify on
-/checkaq
-```
+让 pi 每次会话自动拉起网关：把 `index.ts.disabled` 改名为 `index.ts`
+（当前机器该自启动扩展处于**禁用**状态，手动启动）。
 
-如果某个资源没有加载，运行：
+## 日常更新
 
 ```bash
-pi config
+pi update --all          # 更新 pi 与已装 packages
 ```
 
-## 更新
-
-第一版不锁定版本。需要更新 Pi 和已安装 packages 时手动执行：
-
-```bash
-pi update --all
-```
+Windows 机器上有变更后，把新状态同步回本仓库：对比 `~/.pi/agent/` 与仓库
+对应文件，改了就覆盖进来提交（以 Windows 为准，仓库里多余的就删掉）。
 
 ## 不要上传这些内容
 
-不要把下面的本机文件复制进本仓库：
+- `auth.json`（及 `.bak`）、`sessions/`、`missions/`、`run-history.jsonl`、`pi-notify-topic`
+- `models-store.json`、`state/`、`web-search-cache/`、`npm/`、`git/`、`bin/`
+- `extensions/herdr-agent-state.ts`（herdr 自动生成、自动覆盖）
+- `extensions/tokenhub-gateway/state.json`、`gateway.log`（运行时产物，已在 .gitignore）
 
-- `~/.pi/agent/auth.json`
-- `~/.pi/agent/sessions/`
-- `~/.pi/agent/models-store.json`
-- `~/.pi/agent/run-history.jsonl`
-- `~/.pi/agent/pi-notify-topic`
-- `~/.pi/agent/npm/`、`git/`、`bin/`、`state/`
-
-每台机器都应单独执行 `/login`。API key 应放在环境变量或 Pi 的本机认证
-存储中，不要提交到 Git。
+以上均已被 `.gitignore` 拦截；每台机器单独 `/login`。
 
 ## 设计文档
 
-- [第一版：最小可用方案](docs/V1_MINIMAL_SETUP.md)
 - [后续功能：需要时再增加](docs/FUTURE_FEATURES.md)

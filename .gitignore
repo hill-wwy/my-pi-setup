@@ -11,6 +11,7 @@ node_modules/
 
 # Pi credentials and private runtime data: never commit these
 **/auth.json
+**/auth.json.bak
 **/sessions/
 **/missions/
 **/run-history.jsonl
@@ -23,4 +24,7 @@ node_modules/
 **/npm/
 **/git/
 **/bin/
-**/*-cache.json
+
+# TokenHub gateway runtime artifacts (source files ARE committed)
+**/tokenhub-gateway/state.json
+**/tokenhub-gateway/gateway.log

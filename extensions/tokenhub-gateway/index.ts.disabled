@@ -1,0 +1,79 @@
+/**
+ * TokenHub 聚合网关 · 自动拉起
+ *
+ * 每次 pi 会话启动时探测 http://127.0.0.1:8790/healthz：
+ *   - 活着 → 什么都不做
+ *   - 没起来 → 用 node 以 detached 方式拉起 gateway.mjs
+ *
+ * 网关是常驻进程，pi 退出时**不**杀掉它，这样下次开 pi 可以继续复用。
+ * 手动停止：taskkill /F /PID $(netstat -ano | findstr :8790)
+ */
+
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const DIR = dirname(fileURLToPath(import.meta.url));
+const GATEWAY = join(DIR, "gateway.mjs");
+const PORT = 8790;
+const HEALTH = `http://127.0.0.1:${PORT}/healthz`;
+
+/** 优先用 PATH 上的 node；找不到再用几个常见安装位置兜底 */
+const NODE_CANDIDATES = [
+  process.env.PI_NODE_PATH,
+  "node",
+  "D:\\DevelopingSoftware\\nodejs\\node.exe",
+  "C:\\Program Files\\nodejs\\node.exe",
+].filter(Boolean) as string[];
+
+async function isAlive(timeoutMs = 800): Promise<boolean> {
+  try {
+    const res = await fetch(HEALTH, { signal: AbortSignal.timeout(timeoutMs) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function launch(): void {
+  const node = NODE_CANDIDATES.find(
+    (c) => c === "node" || existsSync(c),
+  );
+  if (!node) return;
+
+  try {
+    const child = spawn(node, [GATEWAY], {
+      cwd: DIR,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+  } catch {
+    /* 拉不起来就静默失败，不影响 pi 本身 */
+  }
+}
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", async (_event, ctx) => {
+    if (!existsSync(GATEWAY)) return;
+    if (await isAlive()) return;
+
+    launch();
+
+    // 给它一点时间起来，起来了就顺手报一声
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      if (await isAlive()) {
+        ctx.ui.notify(`TokenHub 网关已启动 (127.0.0.1:${PORT})`, "info");
+        return;
+      }
+    }
+    ctx.ui.notify(
+      `TokenHub 网关启动失败，tencent-tokenhub 相关模型可能不可用。手动排查：node "${GATEWAY}"`,
+      "warning",
+    );
+  });
+}

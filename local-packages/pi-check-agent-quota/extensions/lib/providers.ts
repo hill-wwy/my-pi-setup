@@ -119,6 +119,18 @@ export function formatResetFromISO(iso: string): string {
   return diff >= 24 * 3600000 ? formatDays(diff) : formatRemaining(diff);
 }
 
+export function resetAtFromMs(ms: unknown): number | null {
+  const n = finiteNumber(ms);
+  return n !== null && n > Date.now() ? n : null;
+}
+
+export function formatResetFromMs(ms: unknown): string {
+  const resetAt = resetAtFromMs(ms);
+  if (resetAt === null) return "";
+  const diff = resetAt - Date.now();
+  return diff >= 24 * 3600000 ? formatDays(diff) : formatRemaining(diff);
+}
+
 export function bearerHeaders(apiKey: string, extra: Record<string, string> = {}): Record<string, string> {
   return { Authorization: `Bearer ${apiKey}`, ...extra };
 }
@@ -249,6 +261,7 @@ export const PROVIDER_FETCHERS: Record<string, Fetcher> = {
   "kimi-coding": fetchKimi,
   zai: fetchZhipuBalance,
   "zai-coding-cn": fetchZhipuCoding,
+  "zai-coding": fetchZaiCodingGlobal,
   deepseek: fetchDeepseek,
   openrouter: fetchOpenrouter,
   "opencode-go": fetchOpencodeGo,
@@ -532,8 +545,6 @@ export async function fetchKimi(auth: Auth, signal: AbortSignal): Promise<FetchP
   };
 }
 
-/** Zhipu GLM: GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
- *  无 coding plan 时端点返回 500 / code≠0；用裸 API key 当 Authorization value（不加 Bearer） */
 /** Zhipu GLM (zai): GET https://www.bigmodel.cn/api/biz/account/query-customer-account-report
  *  账户现金余额。zai 是余额型配置（pi auth 中选择 zai 时使用）。 */
 export async function fetchZhipuBalance(auth: Auth, signal: AbortSignal): Promise<FetchPayload> {
@@ -561,35 +572,58 @@ export async function fetchZhipuBalance(auth: Auth, signal: AbortSignal): Promis
   };
 }
 
-/** Zhipu GLM Coding Plan (zai-coding-cn): GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
- *  Coding Plan 订阅配额。zai-coding-cn 是桶型配置（pi auth 中选择 zai-coding-cn 时使用）；
- *  非订阅账户该端点返回 code=500 "当前用户不存在coding plan"。 */
-export async function fetchZhipuCoding(auth: Auth, signal: AbortSignal): Promise<FetchPayload> {
+/** Z.AI / 智谱 GLM Coding Plan 共用实现：GET {base}/api/monitor/usage/quota/limit
+ *  响应 data.limits[]（unit 含义来自 z.ai 前端源码）：
+ *    TOKENS_LIMIT / CREDIT_LIMIT unit=3 → 5h 滚动窗口；unit=6 → 7d 周配额（仅部分套餐/站点返回）；
+ *    TIME_LIMIT 是搜索/工具类月度调用次数，不属于对话额度，忽略。
+ *  （新套餐如 Lite 返回 CREDIT_LIMIT，旧套餐返回 TOKENS_LIMIT，字段结构相同。）
+ *  percentage 为服务端已用百分比（0-100）；nextResetTime 为 Unix 毫秒。
+ *  Authorization 统一用 Bearer（实测国内站裸 key/Bearer 均接受，国际站必须 Bearer）。
+ *  非订阅账户该端点返回 code≠0 / success=false（如 "当前用户不存在coding plan"）。 */
+async function fetchZhipuCodingBase(auth: Auth, signal: AbortSignal, baseUrl: string): Promise<FetchPayload> {
   const j = await jsonFetch<any>(
-    "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
-    { Authorization: auth.apiKey },
+    `${baseUrl}/api/monitor/usage/quota/limit`,
+    bearerHeaders(auth.apiKey, { Accept: "application/json" }),
     10_000,
     signal,
   );
-  if (j.code !== undefined && j.code !== 0 && j.code !== 200) {
+  if (j.success === false || (j.code !== undefined && j.code !== 0 && j.code !== 200)) {
     throw new QuotaError("provider_rejected", finiteNumber(j.code) ?? undefined);
   }
-  const limits: any[] = j.data?.limits ?? j.data ?? [];
-  if (!Array.isArray(limits) || limits.length === 0) throw new Error("no limits");
-  const l = limits[0];
-  const used = requiredNumber(l.usage ?? l.currentUsage ?? l.used, "Zhipu usage");
-  const total = requiredNumber(l.quota ?? l.total, "Zhipu quota");
-  if (total <= 0) throw new Error("invalid Zhipu quota");
-  const pct = clampPct((used / total) * 100);
+  const limits: unknown = j.data?.limits;
+  if (!Array.isArray(limits) || limits.length === 0) throw new Error("no Zhipu coding limits");
+
+  const items: RenderItem[] = [];
+  const metrics: Record<string, number> = {};
+  const resetAt: Record<string, number> = {};
+  for (const [unit, label] of [[3, "5h "], [6, "7d "]] as const) {
+    const lim = limits.find((l: any) =>
+      (l?.type === "TOKENS_LIMIT" || l?.type === "CREDIT_LIMIT") && l?.unit === unit);
+    if (!lim) continue; // 7d 周配额仅部分套餐返回，缺失时只显示 5h
+    const metric = label.trim();
+    const pct = requiredPercent(lim.percentage, `Zhipu coding ${metric} percentage`);
+    items.push(...tier(items.length === 0 ? "Usage: " : " / ", label, pct, formatResetFromMs(lim.nextResetTime)));
+    metrics[metric] = pct;
+    const at = resetAtFromMs(lim.nextResetTime);
+    if (at !== null) resetAt[metric] = at;
+  }
+  if (items.length === 0) throw new Error("no Zhipu coding token limits");
   return {
     kind: "quota",
-    items: [
-      { kind: "text", text: `Usage: ${used}/${total} (` },
-      { kind: "pct", pct, metric: "used" },
-      { kind: "text", text: ")" },
-    ],
-    metrics: { used: pct },
+    items,
+    metrics,
+    resetAt: Object.keys(resetAt).length > 0 ? resetAt : undefined,
   };
+}
+
+/** Zhipu GLM Coding Plan 国内站（zai-coding-cn）：open.bigmodel.cn */
+export async function fetchZhipuCoding(auth: Auth, signal: AbortSignal): Promise<FetchPayload> {
+  return fetchZhipuCodingBase(auth, signal, "https://open.bigmodel.cn");
+}
+
+/** Z.AI Coding Plan 国际站（zai-coding）：api.z.ai */
+export async function fetchZaiCodingGlobal(auth: Auth, signal: AbortSignal): Promise<FetchPayload> {
+  return fetchZhipuCodingBase(auth, signal, "https://api.z.ai");
 }
 
 /** DeepSeek: GET https://api.deepseek.com/user/balance */
@@ -714,3 +748,4 @@ export async function fetchOpencodeGo(auth: Auth, signal: AbortSignal): Promise<
     resetAt: Object.keys(resetAtByMetric).length > 0 ? resetAtByMetric : undefined,
   };
 }
+
